@@ -11,6 +11,58 @@ pub struct Weather {
     pub timezone: Option<String>,
     pub current: Current,
     pub daily: Daily,
+    /// The coming hours, from the current one. Older caches have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hourly: Option<Hourly>,
+}
+/// Open-Meteo's hourly lists, side by side: one entry per hour.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Hourly {
+    /// Local times, `2026-11-25T14:00`.
+    pub time: Vec<String>,
+    pub temperature_2m: Vec<Option<f64>>,
+    pub weather_code: Vec<Option<u32>>,
+    pub precipitation_probability: Vec<Option<f64>>,
+    pub is_day: Vec<Option<u8>>,
+}
+/// One hour of `Hourly` with every reading it needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hour {
+    pub at: chrono::NaiveDateTime,
+    pub temperature: f64,
+    pub code: u32,
+    pub rain: Option<f64>,
+    pub day: bool,
+}
+impl Hourly {
+    /// The hours from `from` on, at most `count`, leaving out any hour whose
+    /// time, temperature or conditions are missing rather than drawing a zero.
+    pub fn hours(&self, from: chrono::NaiveDateTime, count: usize) -> Vec<Hour> {
+        self.time
+            .iter()
+            .enumerate()
+            .filter_map(|(i, time)| {
+                let at = chrono::NaiveDateTime::parse_from_str(time, "%Y-%m-%dT%H:%M").ok()?;
+                Some(Hour {
+                    at,
+                    temperature: (*self.temperature_2m.get(i)?)?,
+                    code: (*self.weather_code.get(i)?)?,
+                    rain: self
+                        .precipitation_probability
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .filter(|v| v.is_finite()),
+                    day: self.is_day.get(i).copied().flatten() != Some(0),
+                })
+            })
+            .filter(|hour| hour.temperature.is_finite())
+            // The current hour counts until it is over.
+            .filter(|hour| hour.at + chrono::Duration::hours(1) > from)
+            .take(count)
+            .collect()
+    }
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Current {
@@ -96,6 +148,12 @@ async fn fetch_weather_from(
                 "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,dew_point_2m,is_day".into(),
             ),
             ("daily", "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max".into()),
+            // The reading's next 24 hours, from the current one (ADR 0011).
+            (
+                "hourly",
+                "temperature_2m,weather_code,precipitation_probability,is_day".into(),
+            ),
+            ("forecast_hours", "25".into()),
             ("timezone", "auto".into()),
             // Today supplies the range; Outlook can show the following three days.
             ("forecast_days", "4".into()),
@@ -1457,6 +1515,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hours_start_with_the_current_one_and_skip_missing_readings() {
+        let hourly: Hourly = serde_json::from_value(serde_json::json!({
+            "time": ["2026-11-25T13:00", "2026-11-25T14:00", "2026-11-25T15:00",
+                     "2026-11-25T16:00", "bad"],
+            "temperature_2m": [9.0, 10.0, null, 12.0, 13.0],
+            "weather_code": [3, 61, 2, 0, 0],
+            "precipitation_probability": [10.0, 80.0, 5.0, null, 0.0],
+            "is_day": [1, 1, 1, 0, 0]
+        }))
+        .unwrap();
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 11, 25)
+            .unwrap()
+            .and_hms_opt(14, 20, 0)
+            .unwrap();
+        let hours = hourly.hours(now, 24);
+        // 13:00 is over; 14:00 is the current hour; 15:00 has no temperature.
+        let at: Vec<_> = hours
+            .iter()
+            .map(|h| h.at.format("%H:%M").to_string())
+            .collect();
+        assert_eq!(at, ["14:00", "16:00"]);
+        assert_eq!(hours[0].rain, Some(80.0));
+        assert_eq!(hours[1].rain, None);
+        assert!(!hours[1].day);
+        assert_eq!(hourly.hours(now, 1).len(), 1);
+        // A cache from before hours loads, without them.
+        let old: Weather = serde_json::from_value(serde_json::json!({
+            "current": {"temperature_2m": 1.0, "apparent_temperature": 1.0, "weather_code": 0,
+                "wind_speed_10m": 1.0, "relative_humidity_2m": 50.0, "is_day": 1},
+            "daily": {"time": [], "temperature_2m_max": [], "temperature_2m_min": [],
+                "weather_code": [], "precipitation_probability_max": []}
+        }))
+        .unwrap();
+        assert!(old.hourly.is_none());
+    }
+
+    #[test]
     fn project_helper_receives_resolved_config_path() {
         if let Ok(expected) = std::env::var("HALCYON_PROJECT_ROUTE_FIXTURE") {
             let roots = vec!["requested A".to_string()];
@@ -1617,6 +1712,7 @@ print(json.dumps({'updated_at': json.dumps(observed), 'projects': [row, slow], '
             location: location.clone(),
             updated_at: "2026-10-17T16:00:00+02:00".into(),
             weather: Weather {
+                hourly: None,
                 timezone: None,
                 current: Current {
                     temperature_2m: 14.,

@@ -164,17 +164,8 @@ fn run_labelled(
     timed: Option<super::Also>,
     invocation: Invocation,
 ) -> Ran {
-    if !store.writable() {
-        return Ran::Failed("Automatic switching is off in preview mode.".into());
-    }
-    match store.pending_recovery() {
-        Ok(None) => {}
-        Ok(Some(_)) => {
-            return Ran::Failed(
-                "An interrupted change needs a decision on the Looks page first.".into(),
-            );
-        }
-        Err(error) => return Ran::Failed(error.to_string()),
+    if let Some(blocked) = blocked(store) {
+        return blocked;
     }
     for attempt in 0..2 {
         // Fitted again on every attempt, so a retry never applies a look
@@ -210,38 +201,99 @@ fn run_labelled(
             }
         }
         plan.from_display_rule(display);
-        let skipped = Vec::new();
-        // A coordinated setup is atomic. A missing asset or unavailable
-        // component cannot silently narrow the categories the rule chose.
-        if let Some(reason) = plan.blocking_reasons().into_iter().next() {
-            return Ran::Failed(reason);
+        match commit(store, &plan, held, &label, source, attempt == 0) {
+            Some(ran) => return ran,
+            None => continue,
         }
-        if plan.is_empty() {
-            return Ran::AlreadySet;
+    }
+    Ran::Failed("Settings kept changing while switching. Nothing was changed.".into())
+}
+
+/// Why nothing can be switched now, if anything stops it.
+fn blocked(store: &DesktopStore) -> Option<Ran> {
+    if !store.writable() {
+        return Some(Ran::Failed(
+            "Automatic switching is off in preview mode.".into(),
+        ));
+    }
+    match store.pending_recovery() {
+        Ok(None) => None,
+        Ok(Some(_)) => Some(Ran::Failed(
+            "An interrupted change needs a decision on the Looks page first.".into(),
+        )),
+        Err(error) => Some(Ran::Failed(error.to_string())),
+    }
+}
+
+/// Applies a planned switch: what became of it, or `None` to plan again
+/// after a conflict when `retry` allows one.
+fn commit(
+    store: &DesktopStore,
+    plan: &profiles::ProfilePlan,
+    held: &BTreeSet<Domain>,
+    label: &str,
+    source: Source,
+    retry: bool,
+) -> Option<Ran> {
+    // A coordinated setup is atomic. A missing asset or unavailable
+    // component cannot silently narrow the categories the rule chose.
+    if let Some(reason) = plan.blocking_reasons().into_iter().next() {
+        return Some(Ran::Failed(reason));
+    }
+    if plan.is_empty() {
+        return Some(Ran::AlreadySet);
+    }
+    let waits: BTreeSet<Domain> = plan
+        .domains
+        .iter()
+        .filter(|part| !part.changes.is_empty() && held.contains(&part.domain))
+        .map(|part| part.domain)
+        .collect();
+    if !waits.is_empty() {
+        return Some(Ran::Waiting(waits));
+    }
+    Some(match profiles::apply_as(store, plan, label, source) {
+        Ok(latest) => Ran::Applied {
+            change: latest.id,
+            skipped: Vec::new(),
+        },
+        Err(DesktopError::Conflict(_) | DesktopError::FieldConflict { .. }) if retry => {
+            return None;
         }
-        let waits: BTreeSet<Domain> = plan
-            .domains
-            .iter()
-            .filter(|part| !part.changes.is_empty() && held.contains(&part.domain))
-            .map(|part| part.domain)
+        Err(DesktopError::InvalidValue { message, .. }) if message == "Nothing to change" => {
+            Ran::AlreadySet
+        }
+        Err(error) => Ran::Failed(error.to_string()),
+    })
+}
+
+/// A style or ready-made theme chosen by id from the command line, applied
+/// as Settings › Appearance applies it (`themes::style_profile`).
+pub fn run_style(
+    store: &DesktopStore,
+    installed: &Installed,
+    id: &str,
+    own_bars: bool,
+    held: &BTreeSet<Domain>,
+) -> Ran {
+    if let Some(blocked) = blocked(store) {
+        return blocked;
+    }
+    for attempt in 0..2 {
+        // Fitted again on every attempt, to the colors as they are now.
+        let profile = match profiles::themes::style_profile(store, installed, id, own_bars) {
+            Ok(profile) => profile,
+            Err(reason) => return Ran::Failed(reason),
+        };
+        let label: String = format!("Style “{}” (command line)", profile.name)
+            .chars()
+            .take(120)
             .collect();
-        if !waits.is_empty() {
-            return Ran::Waiting(waits);
-        }
-        match profiles::apply_as(store, &plan, &label, source) {
-            Ok(latest) => {
-                return Ran::Applied {
-                    change: latest.id,
-                    skipped,
-                };
-            }
-            Err(DesktopError::Conflict(_) | DesktopError::FieldConflict { .. }) if attempt == 0 => {
-                continue;
-            }
-            Err(DesktopError::InvalidValue { message, .. }) if message == "Nothing to change" => {
-                return Ran::AlreadySet;
-            }
-            Err(error) => return Ran::Failed(error.to_string()),
+        let selected: BTreeSet<Domain> = profile.domains().into_iter().collect();
+        let plan = profiles::plan(store, installed, &profile, &selected);
+        match commit(store, &plan, held, &label, Source::Manual, attempt == 0) {
+            Some(ran) => return ran,
+            None => continue,
         }
     }
     Ran::Failed("Settings kept changing while switching. Nothing was changed.".into())

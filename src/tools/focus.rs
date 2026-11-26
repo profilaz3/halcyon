@@ -200,6 +200,21 @@ impl Session {
             }
         }
     }
+    /// Takes over a quick timer as a focus round: its time left, running or
+    /// paused as it was, measured against its full length `total`.
+    pub fn adopt(&mut self, total: i64, remaining: i64, running: bool, now: i64) {
+        let day = 24 * 3_600_000;
+        let remaining = remaining.clamp(1_000, day);
+        self.phase = Phase::Focus;
+        self.length = total.clamp(remaining, day);
+        self.status = if running {
+            Status::Running {
+                ends_at: now + remaining,
+            }
+        } else {
+            Status::Paused { remaining }
+        };
+    }
     pub fn pause(&mut self, now: i64, preferences: &FocusPreferences) {
         if self.running() {
             self.status = Status::Paused {
@@ -334,6 +349,36 @@ pub fn today() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_adopted_timer_runs_as_a_focus_round_and_counts_as_one() {
+        let prefs = FocusPreferences::default();
+        let mut session = Session::default();
+        session.phase = Phase::Break;
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 11, 25, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        // Forty minutes, thirty left, measured against the forty.
+        session.adopt(2_400_000, 1_800_000, true, now);
+        assert_eq!(session.phase, Phase::Focus);
+        assert_eq!(session.remaining(now, &prefs), 1_800_000);
+        assert!((session.progress(now, &prefs) - 0.25).abs() < 1e-6);
+        let event = session.tick(now + 1_800_000, &prefs, "2026-11-25");
+        assert!(matches!(
+            event,
+            Some(Event::Finished {
+                phase: Phase::Focus,
+                ..
+            })
+        ));
+        assert_eq!(session.rounds_today("2026-11-25"), 1);
+        // Paused stays paused; time left is never more than its round.
+        session.adopt(60_000, 90_000, false, 0);
+        assert_eq!(session.status, Status::Paused { remaining: 90_000 });
+        assert_eq!(session.length, 90_000);
+    }
 
     const MIN: i64 = 60_000;
     const DAY: &str = "2026-10-18";

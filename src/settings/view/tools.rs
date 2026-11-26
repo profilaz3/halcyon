@@ -78,6 +78,51 @@ impl Settings {
             ],
         )
     }
+    /// A price above and below for each watchlist item, saved with Enter.
+    fn market_alerts(&self) -> Element<'_, Message> {
+        let editor = &self.tools;
+        let markets = &self.config.markets;
+        let mut rows = vec![label(
+            "Get a notification when a price goes above or below a level. Leave a box empty for no alert.",
+            13.,
+            FG,
+        )];
+        for symbol in &markets.symbols {
+            let saved = markets.alerts.get(symbol).copied().unwrap_or_default();
+            let shown = |above: bool, value: Option<f64>| {
+                editor
+                    .market_alert_drafts
+                    .get(&(symbol.clone(), above))
+                    .cloned()
+                    .unwrap_or_else(|| value.map(|v| v.to_string()).unwrap_or_default())
+            };
+            let field = |above: bool, value: Option<f64>| {
+                let symbol = symbol.clone();
+                let submit = symbol.clone();
+                text_input(if above { "Above" } else { "Below" }, shown(above, value))
+                    .id(format!("market-alert-{}-{symbol}", if above { "above" } else { "below" })
+                        .into())
+                    .on_input(move |text| edit(Edit::MarketAlert(symbol.clone(), above, text)))
+                    .on_submit(move |_| edit(Edit::MarketAlertSave(submit.clone())))
+                    .width(Length::Fixed(110.))
+            };
+            rows.push(
+                row::with_children(vec![
+                    container(line(symbol, 14., FG)).width(Length::Fill).into(),
+                    field(true, saved.above).into(),
+                    field(false, saved.below).into(),
+                ])
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            );
+            if let Some((_, error)) = editor.alert_error.as_ref().filter(|(s, _)| s == symbol) {
+                rows.push(label(error, 13., WARN));
+            }
+        }
+        group(Some("Price alerts"), rows)
+    }
+
     pub(super) fn markets_page(&self) -> Element<'_, Message> {
         let editor = &self.tools;
         let preview = cards::markets(
@@ -184,6 +229,27 @@ impl Settings {
                         markets.show_chart,
                         |value| option(Widget::Markets, "show_chart", value),
                     )),
+                    self.search_target("markets-range", group_row(
+                        "Chart range",
+                        "How much price history the chart shows",
+                        segmented(
+                            crate::markets::Range::ALL
+                                .into_iter()
+                                .map(|range| {
+                                    (
+                                        range.label().into(),
+                                        markets.chart_range == range,
+                                        Some(option(
+                                            Widget::Markets,
+                                            "chart_range",
+                                            serde_json::json!(range),
+                                        )),
+                                    )
+                                })
+                                .collect(),
+                            self.settings_accent(),
+                        ),
+                    )),
                     self.search_target("markets-date", switch(
                         "Publication date",
                         "Date of the rate or time of the stock quote",
@@ -198,6 +264,7 @@ impl Settings {
                     )),
                 ],
             )),
+            self.search_target("markets-alerts", self.market_alerts()),
             group(
                 Some("Data source"),
                 vec![source_controls, label(source_note, 13., FG)],

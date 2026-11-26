@@ -216,6 +216,36 @@ impl Cards {
             eprintln!("Could not keep the timer: {error}");
         }
     }
+    /// The quick timer as a focus round (ADR 0010): its time left, running or
+    /// paused, then the Focus widget on the desktop. A focus session already
+    /// under way is kept, and so is the timer.
+    pub(super) fn timer_to_focus(&mut self) -> Task<Message> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let Some(t) = self.activity.timer.filter(|t| !t.done) else {
+            return Task::none();
+        };
+        if matches!(
+            self.tools.focus.status,
+            focus::Status::Running { .. } | focus::Status::Paused { .. }
+        ) {
+            self.raise_notice(
+                "Focus timer",
+                "A Focus session is already under way, so the quick timer keeps running. \
+                 Stop the session first to turn the timer into one.",
+                String::new(),
+                None,
+            );
+            return Task::none();
+        }
+        self.tools
+            .focus
+            .adopt(t.total_ms, t.remaining(now), t.running(), focus::now_ms());
+        if let Err(error) = self.tools.focus.save() {
+            eprintln!("Focus timer: {error}");
+        }
+        self.timer_command(Some(&Command::TimerCancel));
+        self.pin_from_island(Widget::Focus)
+    }
     pub(super) fn activity_message(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::RefreshCalendar => {}
@@ -294,6 +324,7 @@ impl Cards {
                 return self.pin_from_island(Widget::Messages);
             }
             Event::Command(Command::PinFocus) => return self.pin_from_island(Widget::Focus),
+            Event::Command(Command::TimerToFocus) => return self.timer_to_focus(),
             Event::Command(Command::PinCalendar) if self.config.activity_island.calendar => {
                 return self.pin_from_island(Widget::Calendar);
             }
@@ -675,6 +706,55 @@ mod tests {
         );
         let _ = cards.activity_message(Event::Released(departure));
         assert_eq!(restores() - start, 2);
+    }
+    #[test]
+    fn a_quick_timer_becomes_a_focus_round_unless_one_runs() {
+        if crate::displays::test_support::isolated(
+            "app::activity::tests::a_quick_timer_becomes_a_focus_round_unless_one_runs",
+        ) {
+            return;
+        }
+        use crate::activity_island::timer::Timer;
+        let (mut cards, _) = Cards::init(Core::default(), Config::default());
+        let now = chrono::Utc::now().timestamp_millis();
+        // Ten minutes, three gone: a focus round with seven left, saved.
+        cards.activity.timer = Some(Timer::start(600_000, now - 180_000));
+        let _ = cards.activity_message(Event::Command(Command::TimerToFocus));
+        assert!(cards.activity.timer.is_none(), "the quick timer ends");
+        assert!(cards.tools.focus.running());
+        assert_eq!(cards.tools.focus.phase, focus::Phase::Focus);
+        let left = cards.tools.focus.remaining(focus::now_ms(), &cards.config.focus);
+        assert!((415_000..=420_000).contains(&left), "{left}");
+        assert_eq!(cards.tools.focus.length, 600_000);
+        assert_eq!(cards.tools.focus, focus::Session::load());
+        // A session under way stays, and so does the timer.
+        let session = cards.tools.focus.clone();
+        cards.activity.timer = Some(Timer::start(300_000, now));
+        let _ = cards.activity_message(Event::Command(Command::TimerToFocus));
+        assert_eq!(cards.tools.focus, session);
+        assert!(cards.activity.timer.is_some());
+        assert!(cards.notice.is_some(), "it says why");
+        // A paused timer becomes a paused round; a finished one stays as it is.
+        let _ = cards.update_tool(crate::tools::cards::Action::FocusReset);
+        let mut paused = Timer::start(300_000, now);
+        paused.pause(now + 60_000);
+        cards.activity.timer = Some(paused);
+        let _ = cards.activity_message(Event::Command(Command::TimerToFocus));
+        assert_eq!(
+            cards.tools.focus.status,
+            focus::Status::Paused { remaining: 240_000 }
+        );
+        let _ = cards.update_tool(crate::tools::cards::Action::FocusReset);
+        let mut done = Timer::start(1_000, now - 5_000);
+        done.expire(now);
+        cards.activity.timer = Some(done);
+        let _ = cards.activity_message(Event::Command(Command::TimerToFocus));
+        assert!(!cards.tools.focus.running() && cards.activity.timer.is_some());
+        // halcyon-ctl timer focus asks the same.
+        assert!(matches!(
+            Cards::command(&serde_json::json!({"action": "timer", "do": "focus"})),
+            Some(Message::Activity(Event::Command(Command::TimerToFocus)))
+        ));
     }
     #[test]
     fn activity_island_focus_command_is_fenced_and_uses_shared_session() {

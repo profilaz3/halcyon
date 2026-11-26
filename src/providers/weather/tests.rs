@@ -435,6 +435,8 @@ async fn fb07_real_http_transport_shares_demand_and_bounds_streamed_responses() 
                 text.contains("latitude=45")
                     && text.contains("longitude=16")
                     && text.contains("forecast_days=4")
+                    && text.contains("forecast_hours=25")
+                    && text.contains("hourly=temperature_2m%2Cweather_code")
             );
             let response=match mode {
                 0=>[format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).into_bytes(),body].concat(),
