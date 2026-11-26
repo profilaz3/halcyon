@@ -14,6 +14,7 @@ use cosmic::app::Task;
 use cosmic::widget::image::Handle;
 use cosmic::widget::text_editor;
 mod note_history;
+pub mod tile_editor;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -49,6 +50,10 @@ pub enum Message {
     OpenKdeConnect,
     MarketProvider(crate::markets::Provider),
     MarketSymbols(String),
+    /// Typing a symbol's alert price, above (`true`) or below.
+    MarketAlert(String, bool, String),
+    /// Save the symbol's typed alert prices.
+    MarketAlertSave(String),
     MarketAdd,
     MarketRemove(String),
     MarketMove(String, i8),
@@ -56,6 +61,8 @@ pub enum Message {
     MarketSaveKey,
     MarketRemoveKey,
     MarketKeyDone(bool, Result<(), crate::markets::Problem>),
+    /// The Data tiles page.
+    Tile(tile_editor::Message),
 }
 
 pub struct ToolsEditor {
@@ -64,7 +71,12 @@ pub struct ToolsEditor {
     pub market_busy: bool,
     pub market_status: Option<String>,
     pub watchlist_error: Option<String>,
+    /// Alert prices being typed, by symbol and side (above is `true`).
+    pub market_alert_drafts: std::collections::BTreeMap<(String, bool), String>,
+    /// Why the last alert typed wasn't saved, by symbol.
+    pub alert_error: Option<(String, String)>,
     pub market_preview: crate::markets::State,
+    pub tiles: tile_editor::Editor,
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
     pub visualizer_draft: Option<crate::tools::visualizer::Preferences>,
@@ -105,11 +117,14 @@ impl Default for ToolsEditor {
         let draft = notes::load_draft();
         let mut editor = Self {
             market_symbols: String::new(),
+            market_alert_drafts: Default::default(),
+            alert_error: None,
             market_key: crate::markets::Secret::default(),
             market_busy: false,
             market_status: None,
             watchlist_error: None,
             market_preview: crate::markets::State::default(),
+            tiles: Default::default(),
             feed: None,
             visualizer_draft: None,
             recent: Vec::new(),
@@ -313,6 +328,9 @@ impl ToolsEditor {
             self.sync_markets(&config.markets);
         }
         self.refresh();
+        if tab == Widget::Tiles {
+            return self.tiles.refresh(config);
+        }
         if tab == Widget::Music {
             return self.query();
         }
@@ -415,6 +433,64 @@ impl ToolsEditor {
                         Widget::Markets,
                         "provider",
                         serde_json::json!(provider),
+                    )),
+                );
+            }
+            Message::MarketAlert(symbol, above, text) => {
+                self.alert_error = None;
+                self.market_alert_drafts
+                    .insert((symbol, above), text.chars().take(24).collect());
+            }
+            Message::MarketAlertSave(symbol) => {
+                let saved = config
+                    .markets
+                    .alerts
+                    .get(&symbol)
+                    .copied()
+                    .unwrap_or_default();
+                // A side not typed in keeps its saved price; an empty one clears it.
+                let typed = |above: bool, current: Option<f64>| -> Result<Option<f64>, ()> {
+                    match self.market_alert_drafts.get(&(symbol.clone(), above)) {
+                        None => Ok(current),
+                        Some(text) if text.trim().is_empty() => Ok(None),
+                        Some(text) => text
+                            .trim()
+                            .replace(',', ".")
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|v| v.is_finite() && *v > 0.)
+                            .map(Some)
+                            .ok_or(()),
+                    }
+                };
+                let alert = match (typed(true, saved.above), typed(false, saved.below)) {
+                    (Ok(above), Ok(below)) => crate::markets::Alert { above, below },
+                    _ => {
+                        self.alert_error =
+                            Some((symbol, "Use a price above zero, such as 182.50.".into()));
+                        return (Task::none(), None);
+                    }
+                };
+                let mut alerts = config.markets.alerts.clone();
+                if alert.above.is_none() && alert.below.is_none() {
+                    alerts.remove(&symbol);
+                } else if !alert.valid() {
+                    self.alert_error = Some((
+                        symbol,
+                        "The price below must be lower than the price above.".into(),
+                    ));
+                    return (Task::none(), None);
+                } else {
+                    alerts.insert(symbol.clone(), alert);
+                }
+                self.market_alert_drafts.retain(|(s, _), _| *s != symbol);
+                self.alert_error = None;
+                return (
+                    Task::none(),
+                    Some(Saved::Tool(
+                        Widget::Markets,
+                        "alerts",
+                        serde_json::to_value(alerts).unwrap_or_default(),
                     )),
                 );
             }
@@ -619,6 +695,7 @@ impl ToolsEditor {
             Message::Option(widget, key, value) => {
                 return (Task::none(), Some(Saved::Tool(widget, key, value)));
             }
+            Message::Tile(message) => return self.tiles.update(message, config),
             Message::OpenKdeConnect => {
                 return (
                     crate::settings::run_command(
@@ -773,7 +850,10 @@ impl ToolsEditor {
             | Action::NoteAction(_)
             // The preview's conversations are samples; nothing to open.
             | Action::MarketsOpen | Action::MarketSelect(_)
-            | Action::MessagesOpen => Task::none(),
+            | Action::MarketsRefresh | Action::MarketRange(_)
+            | Action::MessagesOpen
+            // The preview shows the first page.
+            | Action::NotePage(_) => Task::none(),
         }
     }
 }

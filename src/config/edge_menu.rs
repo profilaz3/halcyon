@@ -647,7 +647,7 @@ impl<'de> Deserialize<'de> for Item {
 
 /// The edge menu's second group: every widget outside the right column.
 /// A customized menu keeps its own saved list.
-pub const ELSEWHERE: [Widget; 10] = [
+pub const ELSEWHERE: [Widget; 11] = [
     Widget::Calendar,
     Widget::Clock,
     Widget::Glance,
@@ -658,6 +658,7 @@ pub const ELSEWHERE: [Widget; 10] = [
     Widget::Messages,
     Widget::Markets,
     Widget::Folder,
+    Widget::Tiles,
 ];
 
 /// The built-in menu as a list: where a customized menu starts. `right` is

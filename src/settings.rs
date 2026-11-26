@@ -96,6 +96,8 @@ pub enum Page {
     Messages,
     Markets,
     Folder,
+    /// Data tiles: values read from JSON files.
+    Tiles,
     General,
     Desktop,
     /// The dock's editor. The panel's is the same page on the other bar.
@@ -163,7 +165,7 @@ impl Page {
     ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 41] = [
+    const ALL: [Self; 42] = [
         Self::Home,
         Self::Overview,
         Self::WidgetLayout,
@@ -183,6 +185,7 @@ impl Page {
         Self::Messages,
         Self::Markets,
         Self::Folder,
+        Self::Tiles,
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
@@ -347,6 +350,7 @@ impl Page {
             Self::Messages => Some(Widget::Messages),
             Self::Markets => Some(Widget::Markets),
             Self::Folder => Some(Widget::Folder),
+            Self::Tiles => Some(Widget::Tiles),
             _ => None,
         }
     }
@@ -371,6 +375,7 @@ impl Page {
             Self::Messages => "messages",
             Self::Markets => "markets",
             Self::Folder => "folder",
+            Self::Tiles => "tiles",
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
@@ -416,6 +421,7 @@ impl Page {
             Self::Messages => "Messages",
             Self::Markets => "Markets",
             Self::Folder => "Folder",
+            Self::Tiles => "Data tiles",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock",
@@ -551,6 +557,7 @@ impl Page {
             Self::Messages => "chat-symbolic",
             Self::Markets => "utilities-system-monitor-symbolic",
             Self::Folder => "folder-symbolic",
+            Self::Tiles => "x-office-spreadsheet-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
@@ -837,6 +844,13 @@ pub enum Message {
     DevboxHistory(&'static str, bool),
     DevboxDetails(DevboxSection),
     DevboxReorder(bool),
+    /// The kind of the next watched service: unit, system unit, container
+    /// or port (0 to 3).
+    WatchKind(u8),
+    /// Typing the next watched service's name or port.
+    WatchName(String),
+    WatchAdd,
+    WatchRemove(usize),
     GlanceSection(&'static str, bool),
     GlanceTomorrow(bool),
     GlanceStyle(GlanceStyle),
@@ -1156,6 +1170,10 @@ pub struct Settings {
     reorder: Reorder<Widget>,
     devbox_reorder: Reorder<DevboxSection>,
     devbox_reordering: bool,
+    /// The watched service being added: its kind (`Message::WatchKind`) and
+    /// what was typed, and why the last one wasn't added.
+    watch_draft: (u8, String),
+    watch_error: Option<String>,
     devbox_details: Vec<DevboxSection>,
     placement: placement::PlacementEditor,
     canvas: Option<canvas::Draft>,
@@ -1502,6 +1520,8 @@ impl cosmic::Application for Settings {
             reorder: Reorder::new(),
             devbox_reorder: Reorder::new(),
             devbox_reordering: false,
+            watch_draft: (0, String::new()),
+            watch_error: None,
             devbox_details: Vec::new(),
             calendar: calendar::Editor::default(),
             folder_input: String::new(),
@@ -2038,6 +2058,12 @@ impl cosmic::Application for Settings {
                     crate::tools::music::Feed::Players(players) => Ok(players),
                     crate::tools::music::Feed::Unavailable(error) => Err(error),
                 }))
+            }));
+        }
+        // The preview reads the tiles' files again while their page is open.
+        if self.page == Page::Tiles && !self.config.tiles.tiles.is_empty() {
+            subscriptions.push(cosmic::iced::time::every(Duration::from_secs(10)).map(|_| {
+                Message::Tools(tools::Message::Tile(tools::tile_editor::Message::Refresh))
             }));
         }
         // A live preview redraws once a second while it counts.
@@ -4240,6 +4266,71 @@ impl Settings {
                 self.devbox_reordering = on;
                 self.devbox_reorder.cancel();
             }
+            Message::WatchKind(kind) => {
+                self.watch_draft.0 = kind.min(3);
+                self.watch_error = None;
+            }
+            Message::WatchName(text) => {
+                self.watch_draft.1 = text.chars().take(256).collect();
+                self.watch_error = None;
+            }
+            Message::WatchAdd => {
+                use crate::config::Watched;
+                let text = self.watch_draft.1.trim().to_string();
+                // A unit typed without its kind is a service.
+                let unit = |name: &str| {
+                    if name.contains('.') {
+                        name.to_string()
+                    } else {
+                        format!("{name}.service")
+                    }
+                };
+                let watched = match self.watch_draft.0 {
+                    0 => Some(Watched::UserUnit { name: unit(&text) }),
+                    1 => Some(Watched::SystemUnit { name: unit(&text) }),
+                    2 => Some(Watched::Container { name: text.clone() }),
+                    _ => text.parse().ok().map(|port| Watched::Port { port }),
+                }
+                .filter(Watched::valid);
+                let mut list = self.config.devbox.watched.clone();
+                self.watch_error = match watched {
+                    None => Some(
+                        "Use a service or container name (letters, digits, . _ -) or a port \
+                         from 1 to 65535."
+                            .into(),
+                    ),
+                    Some(_) if list.len() >= crate::config::MAX_WATCHED => Some(
+                        "The System monitor watches six at most. Remove one to add another."
+                            .into(),
+                    ),
+                    Some(watched) if list.contains(&watched) => Some("Already watched.".into()),
+                    Some(watched) => {
+                        list.push(watched);
+                        match Config::save_devbox(json!({"watched": list})) {
+                            Ok(config) => {
+                                self.config = config;
+                                self.watch_draft.1.clear();
+                                self.saved();
+                                None
+                            }
+                            Err(error) => Some(error),
+                        }
+                    }
+                };
+            }
+            Message::WatchRemove(index) => {
+                let mut list = self.config.devbox.watched.clone();
+                if index < list.len() {
+                    list.remove(index);
+                    match Config::save_devbox(json!({"watched": list})) {
+                        Ok(config) => {
+                            self.config = config;
+                            self.saved();
+                        }
+                        Err(error) => self.failed(error),
+                    }
+                }
+            }
             Message::DevboxDetails(section) => {
                 if self.devbox_details.contains(&section) {
                     self.devbox_details.retain(|item| *item != section);
@@ -6371,6 +6462,9 @@ impl Settings {
                         self.placement.refresh(&self.config);
                         self.refresh_canvas();
                         self.saved();
+                        if widget == Widget::Tiles {
+                            return Task::batch([task, self.tools.tiles.refresh(&self.config)]);
+                        }
                     }
                     Err(error) => self.failed(error),
                 }

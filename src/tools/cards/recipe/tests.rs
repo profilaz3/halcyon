@@ -307,6 +307,7 @@ fn notes_designs_order_the_cards_own_parts_and_keep_editing() {
                 paused: false,
                 problem: None,
                 discarded: false,
+                page: 0,
             },
             &Config::default(),
             Some(design),

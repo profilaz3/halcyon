@@ -39,8 +39,24 @@ pub(in crate::app) fn monitor_sample() -> &'static MonitorSample {
                 asleep: false,
             }],
             uptime: "3h 24m".into(),
-            t3: true,
-            dictation: "idle".into(),
+            services: vec![
+                (
+                    crate::config::Watched::UserUnit {
+                        name: "syncthing.service".into(),
+                    },
+                    crate::data::ServiceState::Running,
+                ),
+                (
+                    crate::config::Watched::Container {
+                        name: "postgres".into(),
+                    },
+                    crate::data::ServiceState::Running,
+                ),
+                (
+                    crate::config::Watched::Port { port: 11434 },
+                    crate::data::ServiceState::Stopped,
+                ),
+            ],
             measured: true,
         };
         let histories = MetricHistories::settings_sample(&metrics);
@@ -93,6 +109,7 @@ pub(crate) fn settings_weather_preview_at(
 }
 pub(super) fn weather_sample(today: NaiveDate) -> Weather {
     let weather = Weather {
+        hourly: None,
         timezone: None,
         current: data::Current {
             temperature_2m: 21.,

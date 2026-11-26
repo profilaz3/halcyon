@@ -814,6 +814,30 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     LOCAL_FOLDER,
     hit(Page::Folder, "Show hidden files", "dotfiles folder visibility", false),
+    hit(
+        Page::Tiles,
+        "Data tiles",
+        "custom data json file web address url status build download progress goal gauge graph",
+        false,
+    )
+    .names_page(),
+    hit(Page::Tiles, "Your tiles", "data tiles list remove", false).at("tiles-list"),
+    hit(Page::Tiles, "Add a tile", "data tile json file field template gauge progress graph", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Start from", "data tile template server status build download goal", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Source", "data tile json file path choose web address url http https", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Field", "data tile json key path value", false).at("tiles-add"),
+    hit(Page::Tiles, "Name", "data tile label title", false).at("tiles-add"),
+    hit(Page::Tiles, "Show as", "data tile text progress bar gauge dial graph", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Smallest value", "data tile gauge minimum range", false).at("tiles-add"),
+    hit(Page::Tiles, "Largest value", "data tile progress gauge maximum range", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Unit", "data tile unit percent suffix", false).at("tiles-add"),
+    hit(Page::Tiles, "Read every", "data tile refresh interval how often", false)
+        .at("tiles-add"),
     hit(Page::Appearance, "Widget glass", "crystal shared finish", false),
     hit(Page::WeatherEffects, "Rain on widget glass", "raindrops wallpaper widgets only", false),
     finish_hit(Page::Calendar),
@@ -828,11 +852,21 @@ const SEARCH: &[SearchHit] = &[
     finish_hit(Page::Music),
     finish_hit(Page::Notes),
     finish_hit(Page::Projects),
+    finish_hit(Page::Tiles),
     finish_hit(Page::Weather),
     hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
     hit(Page::Markets, "Show on widget", "markets display options", false).at("markets-display"),
     hit(Page::Markets, "Daily change", "markets percentage previous quote", false).at("markets-change"),
     hit(Page::Markets, "Price chart", "markets graph price history", false).at("markets-chart"),
+    hit(Page::Markets, "Chart range", "markets week month 3 months history period timeframe", false)
+        .at("markets-range"),
+    hit(
+        Page::Markets,
+        "Price alerts",
+        "markets alert notify notification target price above below",
+        false,
+    )
+    .at("markets-alerts"),
     hit(Page::Markets, "Publication date", "markets quote time timestamp", false).at("markets-date"),
     hit(Page::Markets, "Source and chart details", "markets provider chart dates low high prices", false).at("markets-details"),
     MARKETS_WATCHLIST,
@@ -1369,6 +1403,8 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Messages, "Names", "contacts", false),
     hit(Page::Music, "Progress bar", "", false),
     hit(Page::Notes, "Card size", "", false),
+    hit(Page::Notes, "Pages", "notes pages tabs several notes headings sections", false)
+        .at("notes-pages"),
     hit(Page::Notes, "Your note", "", false),
     hit(Page::Overview, "Set up your desktop", "", false),
     hit(Page::Overview, "Show widgets", "", false),
@@ -1506,6 +1542,14 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
 /// Labels the screen draws only in a state the test fixture lacks, and why.
 #[cfg(test)]
 pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
+    (
+        "Smallest value",
+        "in Data tiles' Add a tile, shown once Gauge is chosen",
+    ),
+    (
+        "Largest value",
+        "in Data tiles' Add a tile, shown once Progress bar or Gauge is chosen",
+    ),
     ("Tomorrow", "in Calendar, shown once a calendar is connected"),
     ("Days shown", "in Calendar, shown once a calendar is connected"),
     ("All-day events", "in Calendar, shown once a calendar is connected"),
@@ -2700,6 +2744,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Messages => Widget::Messages,
         Page::Markets => Widget::Markets,
         Page::Folder => Widget::Folder,
+        Page::Tiles => Widget::Tiles,
         _ => return None,
     })
 }
@@ -2719,6 +2764,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Messages => Page::Messages,
         Widget::Markets => Page::Markets,
         Widget::Folder => Page::Folder,
+        Widget::Tiles => Page::Tiles,
     }
 }
 

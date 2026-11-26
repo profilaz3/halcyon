@@ -5,12 +5,14 @@
 mod devices;
 mod folder;
 mod markets;
+mod tiles;
 pub use folder::{folder, folder_in};
 pub use markets::{markets, sample_for as sample_markets_for};
 #[cfg(test)]
 pub use markets::sample as sample_markets;
 pub(crate) mod messages;
 pub(crate) mod recipe;
+pub use tiles::tiles;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};
 use crate::drawer::Widget;
@@ -48,6 +50,8 @@ pub enum Action {
     /// The chance to undo discard `serial` has passed.
     NoteUndoExpired(u64),
     NoteAction(text_editor::Action),
+    /// Show this page of a note split into pages.
+    NotePage(usize),
     /// Tick or untick the checklist item on this line.
     NoteToggle(usize),
     FocusToggle,
@@ -58,6 +62,9 @@ pub enum Action {
     MessagesOpen,
     MarketsOpen,
     MarketSelect(String),
+    /// Ask every Markets source again now.
+    MarketsRefresh,
+    MarketRange(crate::markets::Range),
 }
 
 pub const NOTE_EDITOR: &str = "desktop-cards-note-editor";
@@ -92,6 +99,7 @@ pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
         // Room for the four newest conversations.
         Widget::Messages => [320., 260.],
         Widget::Folder => [344., 234.],
+        Widget::Tiles => tiles::size(&config.tiles.tiles),
         Widget::Markets => [
             if !config.markets.show_chart && config.markets.symbols.len() == 1 { 280. } else { 360. },
             config.markets.height_limit().unwrap_or(420.),
@@ -864,6 +872,62 @@ fn last_played<'a, M: Clone + 'static>(
         .into()
 }
 
+/// A note line with its inline Markdown set: bold, italic and code runs in
+/// one paragraph, cut after `lines`. A line without any stays plain text,
+/// which, unlike rich text, reports its words to accessibility and tests.
+fn note_paragraph<'a, M: 'a>(
+    value: &str,
+    size: f32,
+    lines: usize,
+    color: Color,
+) -> Element<'a, M> {
+    use cosmic::iced::font::{Style, Weight};
+    let ink = crate::widget_style::semantic(color);
+    let base = font();
+    let spans = notes::spans(value);
+    if spans.iter().all(|(emphasis, _)| *emphasis == notes::Emphasis::Plain) {
+        return text::body(notes::shown(value))
+            .size(size)
+            .font(base)
+            .line_height(1.25)
+            .wrapping(advanced_text::Wrapping::WordOrGlyph)
+            .ellipsize(advanced_text::Ellipsize::End(
+                advanced_text::EllipsizeHeightLimit::Lines(lines),
+            ))
+            .class(cosmic::theme::Text::Color(ink))
+            .width(Length::Fill)
+            .into();
+    }
+    let runs: Vec<cosmic::iced::widget::text::Span<'a, (), Font>> = spans
+        .into_iter()
+        .map(|(emphasis, run)| {
+            let font = match emphasis {
+                notes::Emphasis::Plain => base,
+                notes::Emphasis::Bold => Font {
+                    weight: Weight::Bold,
+                    ..base
+                },
+                notes::Emphasis::Italic => Font {
+                    style: Style::Italic,
+                    ..base
+                },
+                notes::Emphasis::Code => Font::MONOSPACE,
+            };
+            cosmic::iced::widget::span(run.to_owned()).font(font).color(ink)
+        })
+        .collect();
+    cosmic::iced::widget::rich_text(runs)
+        .size(size)
+        .font(base)
+        .line_height(1.25)
+        .wrapping(advanced_text::Wrapping::WordOrGlyph)
+        .ellipsize(advanced_text::Ellipsize::End(
+            advanced_text::EllipsizeHeightLimit::Lines(lines),
+        ))
+        .width(Length::Fill)
+        .into()
+}
+
 fn note_lines(value: &str, size: f32, width: f32) -> usize {
     use advanced_text::Paragraph as _;
     type Paragraph = <cosmic::Renderer as advanced_text::Renderer>::Paragraph;
@@ -894,6 +958,8 @@ pub struct NotesView<'a> {
     pub problem: Option<&'a str>,
     /// Cancel just discarded a draft: offer Undo.
     pub discarded: bool,
+    /// The page shown, when the note is split into pages.
+    pub page: usize,
 }
 
 pub fn notes<'a, M: Clone + 'a>(
@@ -1007,12 +1073,31 @@ pub(crate) fn designed_notes<'a, M: Clone + 'a>(
         );
     }
     let readable = view.note.is_ok();
+    // Split at its headings when asked: one page shows, its own heading in
+    // the header. Lines keep their place in the note, for ticking.
+    let pages = view
+        .note
+        .as_ref()
+        .ok()
+        .filter(|_| config.notes.pages)
+        .map(|note| notes::pages(&note.text))
+        .filter(|pages| pages.len() > 1)
+        .unwrap_or_default();
+    let page_count = pages.len();
+    let shown_page = pages.get(view.page.min(page_count.saturating_sub(1))).cloned();
+    let on_page = |index: usize| {
+        shown_page
+            .as_ref()
+            .is_none_or(|page| page.lines.contains(&index))
+    };
     let (done, total) = view
         .note
         .as_ref()
         .ok()
         .into_iter()
-        .flat_map(|note| notes::lines(&note.text))
+        .flat_map(|note| notes::lines(&note.text).into_iter().enumerate())
+        .filter(|(index, _)| on_page(*index))
+        .map(|(_, line)| line)
         .filter_map(|line| {
             if let notes::Line::Task { done, .. } = line {
                 Some(done)
@@ -1023,8 +1108,33 @@ pub(crate) fn designed_notes<'a, M: Clone + 'a>(
         .fold((0, 0), |(done, total), checked| {
             (done + usize::from(checked), total + 1)
         });
+    let title = shown_page.as_ref().map_or("Notes", |page| page.title);
+    let mut paging: Vec<Element<'a, M>> = Vec::new();
+    if let Some(page) = (page_count > 1).then_some(view.page.min(page_count - 1)) {
+        paging.push(control(
+            "go-previous-symbolic",
+            14,
+            (page > 0).then(|| act(Action::NotePage(page - 1))).flatten(),
+            p,
+            false,
+        ));
+        paging.push(label(
+            format!("{}/{page_count}", page + 1),
+            crate::widget_style::SECONDARY,
+            p.muted,
+        ));
+        paging.push(control(
+            "go-next-symbolic",
+            14,
+            (page + 1 < page_count)
+                .then(|| act(Action::NotePage(page + 1)))
+                .flatten(),
+            p,
+            false,
+        ));
+    }
     let header = row::with_children(vec![
-        card_title("Notes", p),
+        card_title(title.to_string(), p),
         if total == 0 {
             container(cosmic::iced::widget::space()).width(0.).into()
         } else {
@@ -1035,6 +1145,10 @@ pub(crate) fn designed_notes<'a, M: Clone + 'a>(
             )
         },
         fill(),
+        row::with_children(paging)
+            .spacing(2)
+            .align_y(Alignment::Center)
+            .into(),
         container(control(
             "edit-copy-symbolic",
             14,
@@ -1088,11 +1202,16 @@ pub(crate) fn designed_notes<'a, M: Clone + 'a>(
                     .sum()
             });
             let mut space = (height - 104. - extra).max(20.);
-            for entry in lines {
+            for (_, entry) in lines
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| on_page(*index))
+            {
                 let (value, size, inset) = match entry {
                     notes::Line::Heading(title) => (title, 15., 0.),
                     notes::Line::Text(value) => (value, 13., 0.),
                     notes::Line::Bullet(value) => (value, 13., 18.),
+                    notes::Line::Numbered(_, value) => (value, 13., 22.),
                     notes::Line::Task { text, .. } => (text, 13., 26.),
                     notes::Line::Blank => ("", 13., 0.),
                 };
@@ -1107,21 +1226,9 @@ pub(crate) fn designed_notes<'a, M: Clone + 'a>(
                     p.foreground
                 };
                 let text_width = (width - 2. * f32::from(PADDING) - inset).max(1.);
-                let needed = note_lines(value, size, text_width);
+                let needed = note_lines(&notes::shown(value), size, text_width);
                 let count = available.min(needed).max(1);
-                let paragraph: Element<'a, M> = text::body(value.to_owned())
-                    .size(size)
-                    .font(font())
-                    .line_height(1.25)
-                    .wrapping(advanced_text::Wrapping::WordOrGlyph)
-                    .ellipsize(advanced_text::Ellipsize::End(
-                        advanced_text::EllipsizeHeightLimit::Lines(count),
-                    ))
-                    .class(cosmic::theme::Text::Color(crate::widget_style::semantic(
-                        color,
-                    )))
-                    .width(Length::Fill)
-                    .into();
+                let paragraph = note_paragraph(value, size, count, color);
                 body.push(match entry {
                     notes::Line::Blank => container(cosmic::iced::widget::space()).height(4).into(),
                     notes::Line::Heading(_) | notes::Line::Text(_) => paragraph,
@@ -1130,6 +1237,14 @@ pub(crate) fn designed_notes<'a, M: Clone + 'a>(
                             .spacing(8)
                             .into()
                     }
+                    notes::Line::Numbered(number, _) => row::with_children(vec![
+                        container(label(format!("{number}."), 13., p.accent))
+                            .width(Length::Fixed(18.))
+                            .into(),
+                        paragraph,
+                    ])
+                    .spacing(4)
+                    .into(),
                     notes::Line::Task { line, done, text } => press(
                         row::with_children(vec![
                             container(checkbox(done, p)).padding([2, 0, 0, 0]).into(),
@@ -1569,6 +1684,7 @@ mod tests {
                     paused: false,
                     problem: None,
                     discarded: false,
+                    page: 0,
                 },
                 &config,
                 enabled.then_some(std::convert::identity::<Action> as fn(Action) -> Action),

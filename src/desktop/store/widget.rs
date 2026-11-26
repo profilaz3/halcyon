@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 133] = fields![
+pub static FIELDS: [WidgetField; 138] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/notes", "Notes recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Notes);
@@ -261,7 +261,9 @@ pub static FIELDS: [WidgetField; 133] = fields![
     "/markets/show_chart", "Markets chart", Style, boolean;
     "/markets/show_date", "Markets publication date", Style, boolean;
     "/markets/show_details", "Markets source and chart details", Style, boolean;
+    "/markets/chart_range", "Markets chart range", Style, |v| matches!(v.as_str(), Some("week" | "month" | "quarter"));
     "/notes/size", "Notes size", Style, notes_size;
+    "/notes/pages", "Notes pages", Style, boolean;
     "/enabled_widgets", "Visible widgets", Layout, widget_list;
     "/widget_order", "Widget order", Layout, widget_list;
     "/widget_positions/calendar", "Calendar position", Layout, position;
@@ -283,6 +285,7 @@ pub static FIELDS: [WidgetField; 133] = fields![
     "/messages/enabled", "Messages", Layout, boolean;
     "/folder/enabled", "Folder", Layout, boolean;
     "/markets/enabled", "Markets", Layout, boolean;
+    "/tiles/enabled", "Data tiles", Layout, boolean;
     "/widget_positions/music", "Music position", Layout, position;
     "/widget_positions/notes", "Notes position", Layout, position;
     "/widget_positions/focus", "Focus position", Layout, position;
@@ -290,6 +293,7 @@ pub static FIELDS: [WidgetField; 133] = fields![
     "/widget_positions/messages", "Messages position", Layout, position;
     "/widget_positions/folder", "Folder position", Layout, position;
     "/widget_positions/markets", "Markets position", Layout, position;
+    "/widget_positions/tiles", "Data tiles position", Layout, position;
     "/widget_sizes/clock", "Clock size", Layout, size;
     "/widget_sizes/weather", "Weather size", Layout, size;
     "/widget_sizes/calendar", "Calendar size", Layout, size;
@@ -303,16 +307,20 @@ pub static FIELDS: [WidgetField; 133] = fields![
     "/widget_sizes/messages", "Messages size", Layout, size;
     "/widget_sizes/folder", "Folder size", Layout, size;
     "/widget_sizes/markets", "Markets size", Layout, size;
+    "/widget_sizes/tiles", "Data tiles size", Layout, size;
 ];
 
 // Local preferences participate in transactions and Undo but are never
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
+    "/tiles/tiles", "Data tiles", Style, crate::tiles::valid_tiles;
     "/folder/path", "Local widget folder", Style, |v| v.is_null() || v.as_str().is_some_and(|s| std::path::Path::new(s).is_absolute());
+    "/devbox/watched", "Watched services", Style, crate::config::valid_watched;
     "/markets/provider", "Market data source", Style, |v| matches!(v.as_str(), Some("public" | "twelve_data"));
     "/markets/symbols", "Markets watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
     "/markets/selected", "Selected watchlist item", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
     "/markets/credential_revision", "Markets connection", Style, |v| v.as_u64().is_some();
+    "/markets/alerts", "Markets price alerts", Style, crate::markets::valid_alerts;
     "/edge_menu/enabled", "Edge menu", Style, boolean;
     "/edge_menu/side", "Edge menu side", Style, |v| matches!(v.as_str(), Some("left" | "right"));
     "/edge_menu/position", "Edge menu position", Style, |v| int_in(v,0,100);
@@ -403,6 +411,9 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/monitor_layouts/messages", "Display layout", Layout, monitor_layout;
     "/monitor_layouts/folder", "Display layout", Layout, monitor_layout;
     "/monitor_layouts/markets", "Display layout", Layout, monitor_layout;
+    "/widget_monitors/tiles/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
+    "/widget_monitors/tiles/hide_disconnected", "Disconnected widget", Layout, boolean;
+    "/monitor_layouts/tiles", "Display layout", Layout, monitor_layout;
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;

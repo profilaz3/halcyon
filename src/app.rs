@@ -277,7 +277,10 @@ pub enum Message {
     Projects(Vec<String>, Result<ProjectsData, String>),
     Weather(crate::providers::weather::Completion),
     WeatherCacheSaved(Result<(), String>),
-    Service(bool),
+    Service(Vec<(crate::config::Watched, crate::data::ServiceState)>),
+    /// Start (`false`) or restart a watched service.
+    ServiceAction(crate::config::Watched, bool),
+    ServiceActed(Result<(), String>),
     Calendar(
         String,
         String,
@@ -310,10 +313,17 @@ pub enum Message {
     /// The phone's conversations, from `crate::messages`.
     Messages(crate::messages::State),
     Markets(crate::markets::State),
+    Tiles(crate::tiles::State),
     Folder(crate::folder::Listing),
     /// Show this subfolder of the chosen folder in the Folder card, or the
     /// chosen folder again with `None`.
     FolderBrowse(Option<std::path::PathBuf>),
+    /// Every entry of the shown folder, for its full reading.
+    FolderReading(crate::folder::Listing),
+    /// Copy a file's or folder's path.
+    CopyPath(std::path::PathBuf),
+    /// A terminal in this folder.
+    Terminal(std::path::PathBuf),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -431,7 +441,7 @@ static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
-    ids: [window::Id; 17],
+    ids: [window::Id; 18],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -761,9 +771,18 @@ impl cosmic::Application for Cards {
         }
         if self.provider_visible(Widget::Markets) {
             subscriptions.push(
-                crate::markets::subscription(self.config.markets.clone(), self.tools.markets.clone())
+                crate::markets::subscription(
+                    self.config.markets.clone(),
+                    self.tools.markets.clone(),
+                    self.tools.markets_refresh,
+                )
                     .map(Message::Markets),
             );
+        }
+        if self.provider_visible(Widget::Tiles) && !self.config.tiles.tiles.is_empty() {
+            let tiles = self.config.tiles.tiles.clone();
+            let feed = crate::tiles::subscription(tiles, self.tools.tiles.clone());
+            subscriptions.push(feed.map(Message::Tiles));
         }
         if self.messages_demand() {
             subscriptions.push(crate::messages::subscription().map(Message::Messages));
@@ -1078,6 +1097,9 @@ impl cosmic::Application for Cards {
                 && !self.tools.markets.same_watchlist(&self.config.markets))
         {
             self.tools.markets = crate::markets::State::default();
+        }
+        if !self.provider_visible(Widget::Tiles) && !self.tools.tiles.tiles.is_empty() {
+            self.tools.tiles = Default::default();
         }
         if !self.messages_demand() {
             self.tools.messages = crate::messages::State::default();
@@ -1563,7 +1585,7 @@ impl Cards {
                 match result {
                     Ok((sampler, mut metrics)) => {
                         // Service status can finish while the sample is in flight.
-                        metrics.t3 = self.metrics.t3;
+                        metrics.services = std::mem::take(&mut self.metrics.services);
                         self.histories.record(
                             &metrics,
                             &self.config.devbox_sampling(),
@@ -1575,7 +1597,7 @@ impl Cards {
                     Err(error) => {
                         if self.config.recipes.devbox.is_some() {
                             self.metrics = Metrics {
-                                t3: self.metrics.t3,
+                                services: std::mem::take(&mut self.metrics.services),
                                 ..Default::default()
                             };
                         }
@@ -2000,7 +2022,13 @@ impl Cards {
             Message::PointerLeft(_) => self.note_pointer_left(),
             Message::ReadingDetails(widget) => {
                 self.calendar_details = None;
-                self.open_reading(widget)
+                let read = if widget == Widget::Folder {
+                    self.tools.folder_reading = None;
+                    self.read_folder()
+                } else {
+                    Task::none()
+                };
+                Task::batch([self.open_reading(widget), read])
             }
             Message::CloseReading => {
                 self.calendar_details = None;
@@ -2224,9 +2252,22 @@ impl Cards {
                 self.retry_calendar_now();
                 Task::none()
             }
-            Message::Service(active) => {
+            Message::Service(states) => {
                 self.service_fetching = false;
-                self.metrics.t3 = active;
+                self.metrics.services = states;
+                Task::none()
+            }
+            Message::ServiceAction(watched, restart) => {
+                cosmic::task::future(async move {
+                    Message::ServiceActed(crate::data::service_action(watched, restart).await)
+                })
+            }
+            Message::ServiceActed(result) => {
+                if let Err(error) = result {
+                    self.raise_notice("Background services", error, String::new(), None);
+                }
+                // Look again at once, whatever happened.
+                self.next_service = Instant::now();
                 Task::none()
             }
             Message::Settings => self.launch(crate::paths::CONTROLLER, vec!["settings".into()]),
@@ -2348,13 +2389,35 @@ impl Cards {
                         && view.is_dir()
                 };
                 self.tools.folder_view = view.filter(inside);
+                // An open reading follows the card into the folder.
+                if self.reading_window.is_some_and(|(_, w)| w == Widget::Folder) {
+                    return self.read_folder();
+                }
                 Task::none()
             }
+            Message::FolderReading(listing) => {
+                if self.folder_shown().as_ref() == Some(&listing.source) {
+                    self.tools.folder_reading = Some(listing);
+                }
+                Task::none()
+            }
+            Message::CopyPath(path) => {
+                cosmic::iced::clipboard::write(path.to_string_lossy().into_owned())
+            }
+            Message::Terminal(dir) => self.open_terminal(dir),
             Message::Markets(state) => {
                 if self.provider_visible(Widget::Markets)
                     && state.source.as_ref().is_some_and(|p| p.feed_key() == self.config.markets.feed_key())
                 {
                     self.tools.markets = state;
+                    return self.market_alerts();
+                }
+                return Task::none();
+            }
+            Message::Tiles(state) => {
+                // A round read for tiles since edited is dropped.
+                if self.provider_visible(Widget::Tiles) && state.tiles == self.config.tiles.tiles {
+                    self.tools.tiles = state;
                 }
                 return Task::none();
             }
@@ -3792,12 +3855,16 @@ mod tests {
         assert!(cards.next_wake().is_none());
         assert!(cards.refresh_visible_data().is_empty());
         assert!(cards.next_metrics >= start + Duration::from_secs(10));
-        let _ = cards.update(Message::Service(true));
+        let watched = crate::config::Watched::Port { port: 1 };
+        let _ = cards.update(Message::Service(vec![(
+            watched.clone(),
+            crate::data::ServiceState::Running,
+        )]));
         let _ = cards.update(Message::Metrics(Ok((
             Sampler::default(),
             Metrics::default(),
         ))));
-        assert!(cards.metrics.t3);
+        assert_eq!(cards.metrics.services[0].0, watched, "kept across the sample");
         assert!(cards.refresh_visible_data().is_empty());
         let mut config = cards.config.clone();
         config.refresh_intervals.devbox = 1;

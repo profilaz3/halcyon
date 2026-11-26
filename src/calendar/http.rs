@@ -1,6 +1,7 @@
-//! Requests for calendar sources: HTTPS anywhere, plain HTTP only on the
-//! local network. Redirects are followed by hand so every hop is checked,
-//! never downgrades to HTTP, and keeps the login only on the same host.
+//! Requests for calendar sources and Data tiles (ADR 0016): HTTPS anywhere,
+//! plain HTTP only on the local network. Redirects are followed by hand so
+//! every hop is checked, never downgrades to HTTP, and keeps the login only
+//! on the same host.
 use super::subscription::SecretText;
 use super::*;
 use std::net::{IpAddr, SocketAddr};
@@ -73,7 +74,7 @@ pub(super) fn all_local(addrs: &[SocketAddr]) -> bool {
 
 /// Parses an address typed by a person. `webcal` becomes HTTPS, a bare host
 /// becomes HTTPS, and credentials or fragments in the address are refused.
-pub(super) fn parse(value: &str, bare_host: bool) -> Result<reqwest::Url, Problem> {
+pub(crate) fn parse(value: &str, bare_host: bool) -> Result<reqwest::Url, Problem> {
     if value.len() > 8192 {
         return Err(Problem::FeedUrl);
     }
@@ -159,7 +160,7 @@ pub(super) fn redirect(
     Ok((next, login && same_host))
 }
 
-pub(super) struct Reply {
+pub(crate) struct Reply {
     pub status: reqwest::StatusCode,
     /// The address that answered, after redirects. Relative links in a
     /// CalDAV reply resolve against it.
@@ -169,23 +170,26 @@ pub(super) struct Reply {
     pub sent_login: bool,
 }
 
-pub(super) struct Request<'a> {
+pub(crate) struct Request<'a> {
     pub method: reqwest::Method,
     pub url: reqwest::Url,
     pub login: Option<&'a Login>,
     pub headers: &'a [(&'static str, &'static str)],
     pub body: Option<String>,
+    /// The largest answer accepted, in bytes.
+    pub limit: usize,
 }
 
 /// Sends one request and follows up to five redirects. Errors never carry
 /// the address, the login or the server's reply.
-pub(super) async fn send(request: Request<'_>) -> Result<Reply, Problem> {
+pub(crate) async fn send(request: Request<'_>) -> Result<Reply, Problem> {
     let Request {
         method,
         mut url,
         login,
         headers,
         body,
+        limit,
     } = request;
     let mut with_login = login.is_some_and(|l| !l.is_empty());
     for _ in 0..=MAX_REDIRECTS {
@@ -224,15 +228,12 @@ pub(super) async fn send(request: Request<'_>) -> Result<Reply, Problem> {
             with_login = keep;
             continue;
         }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_BYTES as u64)
-        {
+        if response.content_length().is_some_and(|n| n > limit as u64) {
             return Err(Problem::FeedLimit);
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|_| Problem::Network)? {
-            if bytes.len().saturating_add(chunk.len()) > MAX_BYTES {
+            if bytes.len().saturating_add(chunk.len()) > limit {
                 return Err(Problem::FeedLimit);
             }
             bytes.extend_from_slice(&chunk);

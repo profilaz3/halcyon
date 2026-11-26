@@ -421,6 +421,7 @@ impl Cards {
                     | Widget::Devices
                     | Widget::Folder
                     | Widget::Markets
+                    | Widget::Tiles
                     | Widget::Messages => {}
                 }
             }
@@ -546,8 +547,9 @@ impl Cards {
                         .refresh_intervals
                         .duration(Widget::Devbox)
                         .max(Duration::from_secs(15));
-                tasks.push(cosmic::task::future(async {
-                    Message::Service(data::t3_active().await)
+                let watched = self.config.devbox.watched.clone();
+                tasks.push(cosmic::task::future(async move {
+                    Message::Service(data::watched_states(watched).await)
                 }));
             }
         }
@@ -1230,6 +1232,7 @@ fn timer_command(value: &serde_json::Value) -> Option<crate::activity_island::br
         Some("cancel") => Command::TimerCancel,
         Some("pause") => Command::TimerPause,
         Some("resume") => Command::TimerResume,
+        Some("focus") => Command::TimerToFocus,
         Some(_) => return None,
         None => {
             let minutes = value["minutes"]
